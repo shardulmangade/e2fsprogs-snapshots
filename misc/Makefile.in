@@ -14,6 +14,9 @@ INSTALL = @INSTALL@
 @IMAGER_CMT@E2IMAGE_PROG= e2image
 @IMAGER_CMT@E2IMAGE_MAN= e2image.8
 
+@IMAGER_CMT@E4SEND_PROG= e4send
+@IMAGER_CMT@E4SEND_MAN= e4send.8
+
 @UUIDD_CMT@UUIDD_PROG= uuidd
 @UUIDD_CMT@UUIDD_MAN= uuidd.8
 
@@ -24,10 +27,10 @@ INSTALL = @INSTALL@
 @BLKID_CMT@FINDFS_MAN= findfs.8
 
 SPROGS=		mke2fs badblocks tune2fs dumpe2fs $(BLKID_PROG) logsave \
-			$(E2IMAGE_PROG) @FSCK_PROG@ e2undo
+			$(E2IMAGE_PROG) $(E4SEND_PROG) @FSCK_PROG@ e2undo
 USPROGS=	mklost+found filefrag e2freefrag $(UUIDD_PROG)
 SMANPAGES=	tune2fs.8 mklost+found.8 mke2fs.8 dumpe2fs.8 badblocks.8 \
-			e2label.8 $(FINDFS_MAN) $(BLKID_MAN) $(E2IMAGE_MAN) \
+			e2label.8 $(FINDFS_MAN) $(BLKID_MAN) $(E2IMAGE_MAN) $(E4SEND_MAN)\
 			logsave.8 filefrag.8 e2freefrag.8 e2undo.8 $(UUIDD_MAN) @FSCK_MAN@
 FMANPAGES=	mke2fs.conf.5
 
@@ -46,6 +49,7 @@ UUIDD_OBJS=	uuidd.o
 DUMPE2FS_OBJS=	dumpe2fs.o
 BADBLOCKS_OBJS=	badblocks.o
 E2IMAGE_OBJS=	e2image.o
+E4SEND_OBJS=	e4send.o
 FSCK_OBJS=	fsck.o base_device.o ismounted.o
 BLKID_OBJS=	blkid.o
 FILEFRAG_OBJS=	filefrag.o
@@ -63,6 +67,7 @@ PROFILED_UUIDD_OBJS=	profiled/uuidd.o
 PROFILED_DUMPE2FS_OBJS=	profiled/dumpe2fs.o
 PROFILED_BADBLOCKS_OBJS=	profiled/badblocks.o
 PROFILED_E2IMAGE_OBJS=	profiled/e2image.o
+PROFILED_E4SEND_OBJS=	profiled/e4send.o
 PROFILED_FSCK_OBJS=	profiled/fsck.o profiled/base_device.o \
 			profiled/ismounted.o
 PROFILED_BLKID_OBJS=	profiled/blkid.o
@@ -101,10 +106,10 @@ COMPILE_ET=$(top_builddir)/lib/et/compile_et --build-tree
 all:: profiled $(SPROGS) $(UPROGS) $(USPROGS) $(SMANPAGES) $(UMANPAGES) \
 	$(FMANPAGES) $(LPROGS)
 
-@PROFILE_CMT@all:: tune2fs.profiled blkid.profiled e2image.profiled \
+@PROFILE_CMT@all:: tune2fs.profiled blkid.profiled e2image.profiled e4send.profiled\
 	e2undo.profiled mke2fs.profiled dumpe2fs.profiled fsck.profiled \
 	logsave.profiled filefrag.profiled uuidgen.profiled uuidd.profiled \
-	e2image.profiled
+	e2image.profiled e4send.profiled
 
 profiled:
 @PROFILE_CMT@	$(E) "	MKDIR $@"
@@ -181,6 +186,14 @@ e2image.profiled: $(PROFILED_E2IMAGE_OBJS) $(PROFILED_DEPLIBS)
 	$(E) "	LD $@"
 	$(Q) $(CC) $(ALL_LDFLAGS) -g -pg -o e2image.profiled \
 		$(PROFILED_E2IMAGE_OBJS) $(PROFILED_LIBS) $(LIBINTL)
+e4send: $(E4SEND_OBJS) $(DEPLIBS)
+	$(E) "	LD $@"
+	$(Q) $(CC) $(ALL_LDFLAGS) -o e4send $(E4SEND_OBJS) $(LIBS) $(LIBINTL)
+
+e4send.profiled: $(PROFILED_E4SEND_OBJS) $(PROFILED_DEPLIBS)
+	$(E) "	LD $@"
+	$(Q) $(CC) $(ALL_LDFLAGS) -g -pg -o e4send.profiled \
+		$(PROFILED_E4SEND_OBJS) $(PROFILED_LIBS) $(LIBINTL)
 
 e2undo: $(E2UNDO_OBJS) $(DEPLIBS)
 	$(E) "	LD $@"
@@ -337,6 +350,10 @@ findfs.8: $(DEP_SUBSTITUTE) $(srcdir)/findfs.8.in
 e2image.8: $(DEP_SUBSTITUTE) $(srcdir)/e2image.8.in
 	$(E) "	SUBST $@"
 	$(Q) $(SUBSTITUTE_UPTIME) $(srcdir)/e2image.8.in e2image.8
+
+e4send.8: $(DEP_SUBSTITUTE) $(srcdir)/e4send.8.in
+	$(E) "	SUBST $@"
+	$(Q) $(SUBSTITUTE_UPTIME) $(srcdir)/e4send.8.in e4send.8
 
 dumpe2fs.8: $(DEP_SUBSTITUTE) $(srcdir)/dumpe2fs.8.in 
 	$(E) "	SUBST $@"
@@ -532,11 +549,11 @@ clean:
 		$(FMANPAGES) \
 		base_device base_device.out mke2fs.static filefrag e2freefrag \
 		e2initrd_helper partinfo prof_err.[ch] default_profile.c \
-		uuidd e2image tune2fs.static tst_ismounted fsck.profiled \
-		blkid.profiled tune2fs.profiled e2image.profiled \
+		uuidd e2image e4send tune2fs.static tst_ismounted fsck.profiled \
+		blkid.profiled tune2fs.profiled e2image.profiled e4send.profiled\
 		e2undo.profiled mke2fs.profiled dumpe2fs.profiled \
 		logsave.profiled filefrag.profiled uuidgen.profiled \
-		uuidd.profiled e2image.profiled \
+		uuidd.profiled e2image.profiled e4send.profiled\
 		profiled/*.o \#* *.s *.o *.a *~ core gmon.out
 
 mostlyclean: clean

@@ -1,0 +1,47 @@
+.\" -*- nroff -*-
+.\" This file may be copied under the terms of the GNU Public License.
+.\" 
+.TH E4SEND 8 "@E2FSPROGS_MONTH@ @E2FSPROGS_YEAR@" "E2fsprogs version @E2FSPROGS_VERSION@"
+.SH NAME
+e4send \- Save state of the device present when the snapshot was taken to a file
+.SH SYNOPSIS
+.B e4send
+.I source-device
+.I image-file
+.SH DESCRIPTION
+The
+.B e4send
+program will save state of the  
+.I device  
+when the snapshot of to a file specified by 
+.IR image-file .
+The image file may be mounted as a loop back device and the data can be accessed
+ In the future,
+e4send will be enhanced to be able to directly specify the backup from 
+.I source-device
+to
+.I target-device.
+Currently the utility sends full backup from snapshots but will be enhanced to send
+incremental backups between to snapshots to the 
+.Itarget-device
+.PP
+If  
+.I image-file
+is \-, then the output of 
+.B e4send
+will be sent to standard output, so that the output can be piped to
+another program, such as 
+.BR gzip (1).  
+.PP
+.SH AUTHOR
+.B e4send
+was written by Shardul Mangade(shardul.mangade@gmail.com).
+.SH AVAILABILITY
+.B e4send
+is part of the e2fsprogs package and is available from 
+https://shardulmangade@github.com/shardulmangade/e2fsprogs-snapshots.git
+.SH SEE ALSO
+.BR e2image (8) 
+.BR dumpe2fs (8),
+.BR debugfs (8)
+
