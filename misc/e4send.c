@@ -33,9 +33,11 @@
 #include "e2p/e2p.h"
 #include "ext2fs/e2image.h"
 #include "../version.h"
+#include "nls-enable.h"
 
 #define MAX 50
-#define BLOCK_GROUP_OFFSET EXT2_BLOCKS_PER_GROUP(fs->super)*fs->blocksize;
+#define MNT "/mnt/source"
+#define BLOCK_GROUP_OFFSET EXT2_BLOCKS_PER_GROUP(fs->super)*fs->blocksize
 const char * program_name = "e4send";
 
 static void usage(void)
@@ -95,9 +97,9 @@ static void write_full_image(ext2_filsys fs, int fd)
 	int	group = 0;
 	blk_t	blocks = 0;
 	int	bitmap;
-	errcode_t	retval;
-        char		*buf, *zero_buf;
-	int		sparse = 0;
+	char	*buf, *zero_buf;
+	int	sparse = 0;
+        errcode_t retval;
 
 	buf = malloc(fs->blocksize);
 	if (!buf) {
@@ -113,7 +115,7 @@ static void write_full_image(ext2_filsys fs, int fd)
 
 	for (blk = fs->super->s_first_data_block;
          blk < fs->super->s_blocks_count; blk++) {
-                if(fs->group_desc[group].bg_flags & EXT2_BG_BLOCK_UNINIT)){ 
+                if(fs->group_desc[group].bg_flags & EXT2_BG_BLOCK_UNINIT){ 
                         group++;
                         blk+=BLOCK_GROUP_OFFSET;
                         if (fd == 1) {
@@ -153,16 +155,13 @@ static void write_full_image(ext2_filsys fs, int fd)
 static void get_snapshot_filename(char *device, char *snapshot_name,
 				  char *snapshot)
 {	int i=0,j=0,temp;
-	char *host;
-        
-	host=(char *)malloc(MAX);
+	char *mount_point;
+        mount_point=(char *)malloc(MAX);
 
 	while(device[i++]!='@');
-	temp=i;
-	host=getenv("USER");
-	printf("%s",host);
-	strcpy(snapshot,"/home/"); 
-	strcat(snapshot,host);
+        temp=i;
+	strcpy(mount_point,MNT);
+	strcat(snapshot,mount_point); 
 	strcat(snapshot,"/.snapshots/\0");
 	while(device[i]!=0)
 		snapshot_name[j++]=device[i++];
@@ -177,11 +176,12 @@ int main (int argc, char ** argv)
 	int c;
 	errcode_t retval;
 	ext2_filsys fs;
-	char *image_fn,*device_name,snapshot[MAX],snapshot_name[MAX];
+	char *image_fn,*device_name;
+        char command[MAX],snapshot[MAX],snapshot_name[MAX];
 	int open_flag = 0;
         int fd = 0;
         int optind=1;
-      
+        
 	fprintf (stderr, "e2image %s (%s)\n", E2FSPROGS_VERSION,
 		 E2FSPROGS_DATE);
 	if (optind != argc - 2 ) 
@@ -194,10 +194,11 @@ int main (int argc, char ** argv)
 
         sprintf(command, "snapshot.ext4dev enable %s", snapshot_name);
         printf("\n%s\n",command);
-        system(command);
+        retval=system(command);
 
 	retval = ext2fs_open (snapshot, open_flag, 0, 0,
 			      unix_io_manager, &fs);
+        retval= ext2fs_read_bitmaps(fs);
         if (retval) {
 		com_err (program_name, retval, _("while trying to open %s"),
 			 device_name);
@@ -220,9 +221,9 @@ int main (int argc, char ** argv)
 			exit(1);
 		}
 	}
-
         write_full_image(fs, fd);
-	ext2fs_close (fs);
+        //ftruncate(fd,(long long unsigned)fs->super->s_blocks_count*fs->blocksize);
+        ext2fs_close (fs);
         close(fd);
 	exit (0);
 }
