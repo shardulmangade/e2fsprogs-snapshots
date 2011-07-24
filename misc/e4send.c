@@ -42,7 +42,7 @@ const char * program_name = "e4send";
 
 static void usage(void)
 {
-	fprintf(stderr, _("Usage: %s device image_file\n"),
+	fprintf(stderr, _("Usage: %s <device>@<snapshot_name> <image_file>\n"),
 		program_name);
 	exit (1);
 }
@@ -90,7 +90,10 @@ static void write_block(int fd, char *buf, int sparse_offset,
 		}
 	}
 }
-
+/* Create the full backup image file
+   fs corresponds to the source snapshot file
+   fd is the file descriptor for destination file
+ */
 static void write_full_image(ext2_filsys fs, int fd)
 {
 	blk_t	blk;
@@ -114,7 +117,7 @@ static void write_full_image(ext2_filsys fs, int fd)
 	memset(zero_buf, 0, fs->blocksize);
 
 	for (blk = fs->super->s_first_data_block;
-         blk < fs->super->s_blocks_count; blk++) {
+	     blk < fs->super->s_blocks_count; blk++) {
                 if(fs->group_desc[group].bg_flags & EXT2_BG_BLOCK_UNINIT){ 
                         group++;
                         blk+=BLOCK_GROUP_OFFSET;
@@ -128,7 +131,7 @@ static void write_full_image(ext2_filsys fs, int fd)
                 }
                 bitmap = ext2fs_fast_test_block_bitmap(fs->block_map, blk);
                 if(bitmap) {
-                       retval = io_channel_read_blk(fs->io, blk, 1, buf);
+			retval = io_channel_read_blk(fs->io, blk, 1, buf);
 			if (retval) {
 				com_err(program_name, retval,
 					"error reading block %u", blk);
@@ -150,19 +153,15 @@ static void write_full_image(ext2_filsys fs, int fd)
         }
 }
 
-/* sepearate the names of target device, snapshot and snapshot file
+/* Sepearate the names of target device, snapshot and snapshot file
  */
 static void get_snapshot_filename(char *device, char *snapshot_name,
 				  char *snapshot)
 {	int i=0,j=0,temp;
-	char *mount_point;
-        mount_point=(char *)malloc(MAX);
-
 	while(device[i++]!='@');
         temp=i;
-	strcpy(mount_point,MNT);
-	strcat(snapshot,mount_point); 
-	strcat(snapshot,"/.snapshots/\0");
+	strcpy(snapshot,MNT); 
+	strcat(snapshot,"/.snapshots/");
 	while(device[i]!=0)
 		snapshot_name[j++]=device[i++];
 	snapshot_name[j]=device[i];
@@ -170,43 +169,44 @@ static void get_snapshot_filename(char *device, char *snapshot_name,
 	device[temp-1]=0;
 }
 
-
 int main (int argc, char ** argv)
 {
-	int c;
 	errcode_t retval;
 	ext2_filsys fs;
 	char *image_fn,*device_name;
-        char command[MAX],snapshot[MAX],snapshot_name[MAX];
+        char command[MAX],snapshot_file[MAX],snapshot_name[MAX];
 	int open_flag = 0;
         int fd = 0;
         int optind=1;
+        off_t block_count,block_size;
         
-	fprintf (stderr, "e2image %s (%s)\n", E2FSPROGS_VERSION,
+	fprintf (stderr, "e4send %s (%s)\n", E2FSPROGS_VERSION,
 		 E2FSPROGS_DATE);
 	if (optind != argc - 2 ) 
 		usage();
 
         device_name = argv[optind];
 	image_fn = argv[optind+1];
-        get_snapshot_filename(device_name,snapshot_name,snapshot);
-        printf("\n%s %s %s\n",snapshot,snapshot_name,device_name);
+        get_snapshot_filename(device_name,snapshot_name,snapshot_file);
+        printf("\nFile Path:%s\nSnapshot:%s\nDevice:%s\n",snapshot_file,snapshot_name,device_name);
 
         sprintf(command, "snapshot.ext4dev enable %s", snapshot_name);
-        printf("\n%s\n",command);
         retval=system(command);
 
-	retval = ext2fs_open (snapshot, open_flag, 0, 0,
+	retval = ext2fs_open (snapshot_file, open_flag, 0, 0,
 			      unix_io_manager, &fs);
-        retval= ext2fs_read_bitmaps(fs);
         if (retval) {
 		com_err (program_name, retval, _("while trying to open %s"),
-			 device_name);
+			 snapshot_file);
 		fputs(_("Couldn't find valid filesystem superblock.\n"),
-			 stdout);
+		      stdout);
 		exit(1);
 	}
-
+        retval= ext2fs_read_bitmaps(fs);
+        if (retval) {
+		com_err (program_name, retval, "while trying to read bitmap");
+		exit(1);
+	}
 	if (strcmp(image_fn, "-") == 0)
 		fd = 1;
 	else {
@@ -222,8 +222,15 @@ int main (int argc, char ** argv)
 		}
 	}
         write_full_image(fs, fd);
-        //ftruncate(fd,(long long unsigned)fs->super->s_blocks_count*fs->blocksize);
+        block_count=fs->super->s_blocks_count;
+        block_size=fs->blocksize;
+#ifdef HAVE_OPEN64
+        ftruncate64(fd,block_count*block_size);
+#else
+        ftruncate(fd,block_count*block_size);
+#endif
         ext2fs_close (fs);
         close(fd);
+        printf("\n Full Backup of %s completed\n\n",snapshot_file);
 	exit (0);
 }
