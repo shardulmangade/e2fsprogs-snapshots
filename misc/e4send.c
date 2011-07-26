@@ -11,6 +11,7 @@
 
 #define _LARGEFILE_SOURCE
 #define _LARGEFILE64_SOURCE
+#define _FILE_OFFSET_BITS 64
 
 #include <fcntl.h>
 #include <grp.h>
@@ -35,7 +36,7 @@
 #include "../version.h"
 #include "nls-enable.h"
 
-#define MAX 50
+#define MAX 150
 #define MNT "/mnt/source"
 #define BLOCK_GROUP_OFFSET EXT2_BLOCKS_PER_GROUP(fs->super)*fs->blocksize
 const char * program_name = "e4send";
@@ -90,10 +91,56 @@ static void write_block(int fd, char *buf, int sparse_offset,
 		}
 	}
 }
+
+/* Retrive mount-point for device if mounted. If the device
+ * is not mounted, then mount it and return the mount-point.
+ */
+static int get_mount_point(char *device, char *mount_point)
+{       
+        FILE *fp;
+        char *line=NULL;
+        char *target=NULL,*temp;
+        size_t len =0;
+        errcode_t err;
+        
+        fp=fopen("/proc/mounts","r");
+        if (!fp) {
+                com_err(program_name, errno,
+			_("while trying to open /proc/mounts"));
+		exit(1);        
+        }
+        while(target==NULL && getline(&line, &len, fp)!=-1)
+                target=strstr(line, device);
+        if(target){
+                target+=strlen(device)+1;
+                temp=strchr(target,' ');
+                *temp=0;
+                strcpy(mount_point,target);
+        }
+        else{                   
+                if(mkdir(MNT,S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) != 0) {
+                        if(errno!=EEXIST){
+                                com_err(program_name, errno,
+                                        _("while trying to create /mnt/source"));
+                                exit(1);
+                                
+                        }
+                }
+                strcpy(mount_point,MNT);
+                if(mount(device, mount_point, "ext4dev", 0, NULL)){
+                        com_err(program_name, errno,
+                                _("while trying to mount device"));
+                        exit(1);
+                }
+        }
+        fclose(fp);
+   
+}
+
 /* Create the full backup image file
    fs corresponds to the source snapshot file
    fd is the file descriptor for destination file
- */
+*/
 static void write_full_image(ext2_filsys fs, int fd)
 {
 	blk_t	blk;
@@ -158,15 +205,20 @@ static void write_full_image(ext2_filsys fs, int fd)
 static void get_snapshot_filename(char *device, char *snapshot_name,
 				  char *snapshot)
 {	int i=0,j=0,temp;
+        errcode_t retval;
+        char command[MAX];
 	while(device[i++]!='@');
         temp=i;
-	strcpy(snapshot,MNT); 
-	strcat(snapshot,"/.snapshots/");
 	while(device[i]!=0)
 		snapshot_name[j++]=device[i++];
 	snapshot_name[j]=device[i];
+        device[temp-1]=0;
+        get_mount_point(device,snapshot);
+        sprintf(command, "snapshot.ext4dev config %s %s", device, snapshot);
+        retval=system(command);
+	strcat(snapshot,"/.snapshots/");
 	strcat(snapshot,snapshot_name);
-	device[temp-1]=0;
+	
 }
 
 int main (int argc, char ** argv)
@@ -174,10 +226,8 @@ int main (int argc, char ** argv)
 	errcode_t retval;
 	ext2_filsys fs;
 	char *image_fn,*device_name;
-        char command[MAX],snapshot_file[MAX],snapshot_name[MAX];
-	int open_flag = 0;
-        int fd = 0;
-        int optind=1;
+        char command[MAX],snapshot_file[MAX],snapshot_name[MAX],mount_point[MAX];
+	int open_flag = 0,fd=0,optind=1,ret;
         off_t block_count,block_size;
         
 	fprintf (stderr, "e4send %s (%s)\n", E2FSPROGS_VERSION,
@@ -188,9 +238,9 @@ int main (int argc, char ** argv)
         device_name = argv[optind];
 	image_fn = argv[optind+1];
         get_snapshot_filename(device_name,snapshot_name,snapshot_file);
-        printf("\nFile Path:%s\nSnapshot:%s\nDevice:%s\n",snapshot_file,snapshot_name,device_name);
+        printf("\nDevice:%s\nSnapshot:%s\nSnapshot file path:%s\n",device,snapshot_name,snapshot_file);
 
-        sprintf(command, "snapshot.ext4dev enable %s", snapshot_name);
+        sprintf(command, "snapshot.ext4dev enable %s", snapshot_file);
         retval=system(command);
 
 	retval = ext2fs_open (snapshot_file, open_flag, 0, 0,
@@ -225,12 +275,16 @@ int main (int argc, char ** argv)
         block_count=fs->super->s_blocks_count;
         block_size=fs->blocksize;
 #ifdef HAVE_OPEN64
-        ftruncate64(fd,block_count*block_size);
+        ret=ftruncate64(fd,block_count*block_size);
 #else
-        ftruncate(fd,block_count*block_size);
+        ret=ftruncate(fd,block_count*block_size);
 #endif
+        if(ret<0){
+                com_err (program_name, retval, _("while trying to truncate %s"),
+			 image_fn);
+	}
         ext2fs_close (fs);
         close(fd);
-        printf("\n Full Backup of %s completed\n\n",snapshot_file);
+        printf("\nFull Backup of %s completed\n\n",snapshot_file);
 	exit (0);
 }
