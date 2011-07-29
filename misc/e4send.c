@@ -216,6 +216,8 @@ static void get_snapshot_filename(char *device, char *snapshot_name,
         get_mount_point(device,snapshot);
         sprintf(command, "snapshot.ext4dev config %s %s", device, snapshot);
         retval=system(command);
+        sprintf(command, "snapshot.ext4dev enable %s@%s", snapshot, snapshot_file);
+        retval=system(command);
 	strcat(snapshot,"/.snapshots/");
 	strcat(snapshot,snapshot_name);
 	
@@ -240,10 +242,7 @@ int main (int argc, char ** argv)
         get_snapshot_filename(device_name,snapshot_name,snapshot_file);
         printf("\nDevice:%s\nSnapshot:%s\nSnapshot file path:%s\n",device,snapshot_name,snapshot_file);
 
-        sprintf(command, "snapshot.ext4dev enable %s", snapshot_file);
-        retval=system(command);
-
-	retval = ext2fs_open (snapshot_file, open_flag, 0, 0,
+        retval = ext2fs_open (snapshot_file, open_flag, 0, 0,
 			      unix_io_manager, &fs);
         if (retval) {
 		com_err (program_name, retval, _("while trying to open %s"),
