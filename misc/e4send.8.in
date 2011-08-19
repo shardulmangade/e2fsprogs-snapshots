@@ -5,23 +5,21 @@
 .SH NAME
 e4send \- Save state of the device present when the snapshot was taken to a file
 .SH SYNOPSIS
-.B e4send
-.I source-device
-.I image-file
+.B e4send [-l]
+.I source-device@<snapshot>
+.I target device/image file
 .SH DESCRIPTION
 The
 .B e4send
 program will save state of the  
 .I device  
 when the snapshot of to a file specified by 
-.IR image-file .
+.IR image-file or the target device .
 The image file may be mounted as a loop back device and the data can be accessed
- In the future,
-e4send will be enhanced to be able to directly specify the backup from 
-.I source-device
-to
-.I target-device.
-Currently the utility sends full backup from snapshots but will be enhanced to send
+It can be used to send data over pipe and recieved by e4recieve.
+When the option -l is specified the output is for local storage of
+image file or to local disk. Otherwise it is meant for remote target.
+ Currently the utility sends full backup from snapshots but will be enhanced to send
 incremental backups between to snapshots to the 
 .Itarget-device
 .PP
