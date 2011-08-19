@@ -1,0 +1,23 @@
+.\" -*- nroff -*-
+.\" This file may be copied under the terms of the GNU Public License.
+.\" 
+.TH E4SEND 8 "@E2FSPROGS_MONTH@ @E2FSPROGS_YEAR@" "E2fsprogs version @E2FSPROGS_VERSION@"
+.SH NAME
+e4send \- Receive the state of snapshot and save it to target
+.SH SYNOPSIS
+.B e4receive
+.I target-device
+.SH DESCRIPTION
+
+.B e4receive
+Usage e4receive target device/file
+
+.SH AVAILABILITY
+.B e4receive
+is part of the e2fsprogs package and is available from 
+https://shardulmangade@github.com/shardulmangade/e2fsprogs-snapshots.git
+.SH SEE ALSO
+.BR e4send (8) 
+.BR dumpe2fs (8),
+.BR debugfs (8)
+
