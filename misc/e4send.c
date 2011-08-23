@@ -298,6 +298,13 @@ static void write_full_image_remote(ext2_filsys fs, int fd)
                 com_err(program_name, retval, "error writing chunk");
                 exit(1);
         }
+        count=write(fd, output_buf, CHUNK_SIZE);
+        if(count<0)
+        {
+                retval=errno;
+                com_err(program_name, retval, "error writing chunk");
+                exit(1);
+        }
         free(output_buf);
         free(buf);
 }
@@ -332,7 +339,7 @@ struct fiemap *read_fiemap(int fd)
                 return NULL;
                 
         }
-        printf("IAMHERE");
+        
         extents_size = sizeof(struct fiemap_extent) * 
                               (fiemap->fm_mapped_extents);
 
@@ -358,13 +365,16 @@ struct fiemap *read_fiemap(int fd)
  * dumps fiemap to temporary disk image 
  * called only if we are in revert mode
  */
-void dump_fiemap(struct fiemap *fiemap1, struct fiemap *fiemap2, int snapshot_file, int disk_image)
+void dump_fiemap(struct fiemap *fiemap2, int snapshot_file, int disk_image,int flag)
 {
 	int i,j,k;
 	void *buf;
 	static int full=0;
 	static unsigned long offset=0;
+        char extents[sizeof(fiemap2->fm_mapped_extents)];
         int ret;
+        if(flag)
+                write(1,(char *)fiemap2->fm_mapped_extents,fiemap2->fm_mapped_extents);
 
 	for (i=0;i<fiemap2->fm_mapped_extents;i++) {
 		if(fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT !=
@@ -374,12 +384,21 @@ void dump_fiemap(struct fiemap *fiemap1, struct fiemap *fiemap2, int snapshot_fi
 			lseek(snapshot_file, fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT, SEEK_SET);
 			ret=read(snapshot_file, buf, fiemap2->fm_extents[i].fe_length);			
 
-			lseek(disk_image, fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT, SEEK_SET);
-			ret=write(disk_image, buf, fiemap2->fm_extents[i].fe_length);
-			free(buf);
+                        if(flag){
+                                write(1, &fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT, sizeof(fiemap2->fm_extents[i].fe_logical));
+                                write(1, &fiemap2->fm_extents[i].fe_length, sizeof(fiemap2->fm_extents[i].fe_length));
+                                write(disk_image, buf, fiemap2->fm_extents[i].fe_length);      
+                                      
+                        }
+                        else{
+                                
+                                lseek(disk_image, fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT, SEEK_SET);
+                                ret=write(disk_image, buf, fiemap2->fm_extents[i].fe_length);
+                                free(buf);
+                        }
 		}
 	}
-        printf("Left");
+      
 }
 
 /* Create the incremental backup in terms of deltas from fs1 and fs2.
@@ -442,7 +461,6 @@ static void write_incremental_local(ext2_filsys fs1, ext2_filsys fs2, ext2_filsy
 
 }
 
-
 /* Sepearate the names of target device, snapshot and snapshot file
  */
 static void get_snapshot_filename(char *device, char *snapshot_name,
@@ -480,8 +498,8 @@ int main (int argc, char ** argv)
         struct fiemap *fiemap1,*fiemap2;
         off_t block_count,block_size;
         
-	fprintf (stderr, "e4send %s (%s)\n %d", E2FSPROGS_VERSION,
-		 E2FSPROGS_DATE,argc);
+	fprintf (stderr, "e4send %s (%s)\n ", E2FSPROGS_VERSION,
+		 E2FSPROGS_DATE);
        	while ((c = getopt (argc, argv, "ilF")) != EOF)
 		switch (c) {
 		case 'i':
@@ -495,7 +513,6 @@ int main (int argc, char ** argv)
                 default:
 			usage();
 		}
-                printf("%d", optind);
 	if (optind != argc - opts ) 
 		usage();
 
@@ -524,7 +541,7 @@ int main (int argc, char ** argv)
         if(full_flag)
         {       if(!strcmp(image_fn, "-")){
                         fd=1;
-                                               trunc_val=(char *)&block_count;        
+                         trunc_val=(char *)&block_count;        
                         ret=write(1,trunc_val,sizeof(off_t));
                         if(ret<0){
                                 com_err (program_name, retval, "while trying to write to destination");
@@ -539,7 +556,7 @@ int main (int argc, char ** argv)
                  else{
                
 #ifdef HAVE_OPEN64
-        		fd = open64(image_fn, O_CREAT|O_TRUNC|O_WRONLY, 0600);//////When not incremental |O_TRUNC
+        		fd = open64(image_fn, O_CREAT|O_TRUNC|O_WRONLY, 0600);
 #else
                 	fd = open(image_fn, O_CREAT|O_TRUNC|O_WRONLY, 0600);
 #endif
@@ -551,11 +568,25 @@ int main (int argc, char ** argv)
                 
                         write_full_image(fs, fd);
                 }
+                if(strcmp(image_fn, "-")){
+#ifdef HAVE_OPEN64
+                        ret=ftruncate64(fd,block_count*block_size);
+#else
+                        ret=ftruncate(fd,block_count*block_size);
+#endif
+                        if(ret<0){
+                                com_err (program_name, retval, _("while trying to truncate %s"),
+                                	 image_fn);
+                        }
+        
+                }
+
                 close(fd);
 
         }
         else
         {
+                close(fd);
                 device_name2 =argv[optind+1];
                 image_fn=argv[optind+2];
                 get_snapshot_filename(device_name2,snapshot_name2,snapshot_file2);
@@ -576,52 +607,46 @@ int main (int argc, char ** argv)
         		exit(1);
         	}       
                         
-                        
-      		retval = ext2fs_open (image_fn, EXT2_FLAG_RW, 0, 0,
-			      unix_io_manager, &fs3);
-                if (retval) {
-        		com_err (program_name, retval, _("while trying to open %s"),
-        			 image_fn);
-        		fputs(_("Couldn't find valid filesystem superblock.\n"),
-        		      stdout);
-        		exit(1);
-        	}
-
                 fsd1 = open(snapshot_file, O_RDONLY, 0600);
                 if(fsd1<0)
-                        printf("asa ahe kay");
+                        fprintf(stderr,"Error opening snapshot file");
 		fsd2 = open(snapshot_file2, O_RDONLY, 0600);
                 if(fsd2<0)
-                        printf("tasa ahe kay");
+                        fprintf(stderr,"Error opening snapshot file");
                 fsd3 = open(image_fn, O_WRONLY, 0600);
                 if(fsd3<0)
-                        printf("tasa ahe kay");
+                        fprintf(stderr,"Error opening target device");
                 
-                fiemap1=read_fiemap(fsd1);
                 fiemap2=read_fiemap(fsd2);
-                dump_fiemap(fiemap1,fiemap2,fsd1,fsd3);
+                dump_fiemap(fiemap2,fsd1,fsd3,0);
 
+
+#ifdef HAVE_OPEN64
+                        ret=ftruncate64(fsd3,block_count*block_size);
+#else
+                        ret=ftruncate(fsd3,block_count*block_size);
+#endif
+                        if(ret<0){
+                                com_err (program_name, retval, _("while trying to truncate %s"),
+                                	 image_fn);
+                        }
        
                 close(fsd3);
-
                 close(fsd1);
                 close(fsd2);
+
+                retval = ext2fs_open (image_fn, EXT2_FLAG_RW, 0, 0,
+       			      unix_io_manager, &fs3);
+                if (retval) {
+               		com_err (program_name, retval, _("while trying to open %s"),
+               			 image_fn);
+               		fputs(_("Couldn't find valid filesystem superblock.\n"),
+               		      stdout);
+               		exit(1);
+               	}
                 write_incremental_local(fs,fs2,fs3);
+               ext2fs_close (fs3);
                 ext2fs_close (fs2);
-                ext2fs_close (fs3);
-
-
-        }
-        if(!strcmp(image_fn, "-")){
-#ifdef HAVE_OPEN64
-                ret=ftruncate64(fd,block_count*block_size);
-#else
-                ret=ftruncate(fd,block_count*block_size);
-#endif
-                if(ret<0){
-                        com_err (program_name, retval, _("while trying to truncate %s"),
-                        	 image_fn);
-                }
 
         }
         ext2fs_close (fs);
