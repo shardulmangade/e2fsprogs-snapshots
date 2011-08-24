@@ -58,7 +58,7 @@ const char * program_name = "e4send";
 
 static void usage(void)
 {
-	printf("Usage: %s\n -F  <device>@<snapshot_name> <image_file> : Full backup to local device\n-F  <device>@<snapshot_name> -                : Full backup to remote device\n -i  <device>@<snapshot2> <device>@<snapshot1> <local_device> : Send deltas over snapshot 2 to snapshot1 to local device",	program_name);
+	fprintf(stderr,"Usage:\n %s device@snapshot_name \t\t\t\t   : Full backup to remote device\n %s -i  device@snapshot2 device@snapshot1 local_device : Incremental backup to local device \n\t\t\t\t\t\t\t     Send deltas over snapshot 2 to snapshot1 to local device\n\n",	program_name,program_name);
 	exit (1);
 }
 
@@ -151,76 +151,35 @@ static int get_mount_point(char *device, char *mount_point)
    
 }
 
-/* Create the full backup image file
-   fs corresponds to the source snapshot file
-   fd is the file descriptor for destination file
-*/
-static void write_full_image(ext2_filsys fs, int fd)
-{
-	blk_t	blk;
-	int	group = 0;
-	blk_t	blocks = 0;
-	int	bitmap;
-	char	*buf, *zero_buf;
-	int	sparse = 0;
-        errcode_t retval;
-
-	buf = malloc(fs->blocksize);
-	if (!buf) {
-		com_err(program_name, ENOMEM, "while allocating buffer");
-		exit(1);
-	}
-	zero_buf = malloc(fs->blocksize);
-	if (!zero_buf) {
-		com_err(program_name, ENOMEM, "while allocating buffer");
-		exit(1);
-	}
-	memset(zero_buf, 0, fs->blocksize);
-
-	for (blk = fs->super->s_first_data_block;
-	     blk < fs->super->s_blocks_count; blk++) {
-                if(fs->group_desc[group].bg_flags & EXT2_BG_BLOCK_UNINIT){ 
-                        group++;
-                        blk+=BLOCK_GROUP_OFFSET(fs);
-                        if (fd == 1) {
-				write_block(fd, zero_buf, 0,
-					    BLOCK_GROUP_OFFSET(fs), blk);
-				continue;
-			}
-                        sparse+=BLOCK_GROUP_OFFSET(fs);
-                        continue;
-                }
-                bitmap = ext2fs_fast_test_block_bitmap(fs->block_map, blk);
-                if(bitmap) {
-                        retval = io_channel_read_blk(fs->io, blk, 1, buf);
-			if (retval) {
-				com_err(program_name, retval,
-					"error reading block %u", blk);
-			}
-                        if ((fd != 1) && check_zero_block(buf, fs->blocksize))
-				goto sparse_write;
-               		write_block(fd, buf, sparse, fs->blocksize, blk);
-			sparse = 0;
-      
-                }else {       
-                sparse_write:
-                        if (fd == 1) {
-				write_block(fd, zero_buf, 0,
-					    fs->blocksize, blk);
-				continue;
-			}
-                        sparse += fs->blocksize;
-                }
+/*Print table : For debugging purpose
+ */
+static void print_output_table(char * buff)
+{       
+        unsigned int i=0;
+        static int f=0;
+        int ret;       
+        blk_t *target_off;
+        blk_t blk=0;
+        char data1[CHUNK_BLOCK_SIZE];
+        memset(data1,0,CHUNK_BLOCK_SIZE);
+        for(; i<((CHUNK_BLOCK_SIZE)/sizeof(blk_t)); i++)
+        {
+                target_off=(blk_t*)(buff + i*(sizeof(blk_t)));
+                blk=*target_off; 
+                //memcpy(data1, buff+CHUNK_BLOCK_SIZE*(i+1), CHUNK_BLOCK_SIZE);
+                fprintf(stdout,"\n%d\t%d\t %u\t",f++,i,blk);
+                //ret=write(1,data1,1);
         }
 }
+
 
 /* Create the full backup in terms of chunks.The first block(metadata) of chunk
    stores the offsets and is followed by the data chunk blocks at corresponding offsets.
    fs corresponds to the source snapshot file
-   fd is the file descriptor for destination file
+
 */
 
-static void write_full_image_remote(ext2_filsys fs, int fd)
+static void write_full_image(ext2_filsys fs)
 {
 	blk_t	blk;
 	int	group = 0;
@@ -231,6 +190,7 @@ static void write_full_image_remote(ext2_filsys fs, int fd)
         errcode_t retval;
         blk_t offset=0;
         int count;
+        int fout=1;
         char *output_buf,*blk_buf;
 
 
@@ -239,19 +199,22 @@ static void write_full_image_remote(ext2_filsys fs, int fd)
 		com_err(program_name, ENOMEM, "while allocating buffer");
 		exit(1);
 	}
-	output_buf = malloc(CHUNK_SIZE);  	if (!output_buf) {
+	output_buf = malloc(CHUNK_SIZE);
+  	if (!output_buf) {
 		com_err(program_name, ENOMEM, "while allocating buffer");
 		exit(1);
 	}
         int f=0;
 	for (blk = fs->super->s_first_data_block;
 	     blk < (fs->super->s_blocks_count); blk++) {
-                if(fs->group_desc[group].bg_flags & EXT2_BG_BLOCK_UNINIT){
+                 /* Skip block group if none of the blocks allocated */
+                 if(fs->group_desc[group].bg_flags & EXT2_BG_BLOCK_UNINIT){
                         group++;
                         blk+=BLOCK_GROUP_OFFSET(fs);
                         sparse+=BLOCK_GROUP_OFFSET(fs);
                         continue;
                 }
+                 /* Check if block blk allocated or not */
                 bitmap = ext2fs_fast_test_block_bitmap(fs->block_map, blk);
                 if(bitmap) {
 			retval = io_channel_read_blk(fs->io, blk, 1, buf);
@@ -259,15 +222,19 @@ static void write_full_image_remote(ext2_filsys fs, int fd)
 				com_err(program_name, retval,
 					"error reading block %u", blk);
 			}
+                        /* Check if teh data block consists of  zeros */
                         if (!check_zero_block(buf, fs->blocksize)){
                                 blk_buf=(char *) &sparse;
-                                //fprintf(stderr,"\nWriting block %d at offset %d and sparse is %d",blk,offset,sparse);
+                                 /* Copy offset into meta block of chunk */
                                 memcpy(output_buf + sizeof(blk_t)*(offset), blk_buf, sizeof(blk_t));
                                 sparse=0;
+                                /* Copy corresponding data block into chunk */
                                 memcpy(output_buf + CHUNK_BLOCK_SIZE*(offset+1), buf, CHUNK_BLOCK_SIZE);
                                 offset++;
-                                if(offset >= CHUNK_BLOCKS_COUNT){
-                                        count=write(fd, output_buf, CHUNK_SIZE);
+                                if(offset == CHUNK_BLOCKS_COUNT){
+                                        //print_output_table(output_buf);
+                                        /* Write the chunk to stdout */
+                                        count=write(fout, output_buf, CHUNK_SIZE);
                                         if(count<0)
                                         {
                                                 retval=errno;
@@ -280,8 +247,10 @@ static void write_full_image_remote(ext2_filsys fs, int fd)
                                 
                         }
                         else
-                               sparse+=fs->blocksize;;
+                               sparse+=fs->blocksize;
                 }
+                else
+                        sparse+=fs->blocksize;
         }
         /* Padding with redundancy */
         if(offset<CHUNK_BLOCKS_COUNT)
@@ -289,16 +258,17 @@ static void write_full_image_remote(ext2_filsys fs, int fd)
                 {       memcpy(output_buf + sizeof(blk_t)*(offset), output_buf, sizeof(blk_t));
                         memcpy(output_buf + CHUNK_BLOCK_SIZE*(offset+1), output_buf + CHUNK_BLOCK_SIZE, CHUNK_BLOCK_SIZE);
                 }
-        count=write(fd, output_buf, CHUNK_SIZE);
+        count=write(fout, output_buf, CHUNK_SIZE);
+        // print_output_table(output_buf);
         memset(output_buf, -1, CHUNK_SIZE);
-        count=write(fd, output_buf, CHUNK_SIZE);
+        count=write(fout, output_buf, CHUNK_SIZE);
         if(count<0)
         {
                 retval=errno;
                 com_err(program_name, retval, "error writing chunk");
                 exit(1);
         }
-        count=write(fd, output_buf, CHUNK_SIZE);
+        count=write(fout, output_buf, CHUNK_SIZE);
         if(count<0)
         {
                 retval=errno;
@@ -374,7 +344,7 @@ void dump_fiemap(struct fiemap *fiemap2, int snapshot_file, int disk_image,int f
         char extents[sizeof(fiemap2->fm_mapped_extents)];
         int ret;
         if(flag)
-                write(1,(char *)fiemap2->fm_mapped_extents,fiemap2->fm_mapped_extents);
+                ret=write(1,(char *)fiemap2->fm_mapped_extents,fiemap2->fm_mapped_extents);
 
 	for (i=0;i<fiemap2->fm_mapped_extents;i++) {
 		if(fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT !=
@@ -385,9 +355,9 @@ void dump_fiemap(struct fiemap *fiemap2, int snapshot_file, int disk_image,int f
 			ret=read(snapshot_file, buf, fiemap2->fm_extents[i].fe_length);			
 
                         if(flag){
-                                write(1, &fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT, sizeof(fiemap2->fm_extents[i].fe_logical));
-                                write(1, &fiemap2->fm_extents[i].fe_length, sizeof(fiemap2->fm_extents[i].fe_length));
-                                write(disk_image, buf, fiemap2->fm_extents[i].fe_length);      
+                                ret=write(1, &fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT, sizeof(fiemap2->fm_extents[i].fe_logical));
+                                ret=write(1, &fiemap2->fm_extents[i].fe_length, sizeof(fiemap2->fm_extents[i].fe_length));
+                                ret=write(disk_image, buf, fiemap2->fm_extents[i].fe_length);      
                                       
                         }
                         else{
@@ -430,6 +400,7 @@ static void write_incremental_local(ext2_filsys fs1, ext2_filsys fs2, ext2_filsy
 	memset(zero_buf, 0, fs1->blocksize);
         for (blk = fs1->super->s_first_data_block;
 	     blk < (fs1->super->s_blocks_count); blk++) {
+                /* Skip block group if none of the blocks allocated */
                 if(fs1->group_desc[group].bg_flags & EXT2_BG_BLOCK_UNINIT){
                         group++;
                         blk+=BLOCK_GROUP_OFFSET(fs1);
@@ -454,12 +425,15 @@ static void write_incremental_local(ext2_filsys fs1, ext2_filsys fs2, ext2_filsy
 				com_err(program_name, retval,
 					"error reading block %u", blk);
 			}
-			
+
       
                 }
         }
 
 }
+
+
+
 
 /* Sepearate the names of target device, snapshot and snapshot file
  */
@@ -481,7 +455,7 @@ static void get_snapshot_filename(char *device, char *snapshot_name,
         retval=system(command);
 	strcat(snapshot,"/.snapshots/");
 	strcat(snapshot,snapshot_name);
-	
+
 }
 
 int main (int argc, char ** argv)
@@ -492,35 +466,36 @@ int main (int argc, char ** argv)
 	char *image_fn,*device_name,*device_name2,*trunc_val;
         char command[MAX],snapshot_file[MAX],snapshot_name[MAX],mount_point[MAX];
         char snapshot_file2[MAX],snapshot_name2[MAX],mount_point2[MAX];
-	int open_flag = 0,local_flag = 0,incremental_flag=0,full_flag;
-        int fd=0,ret,opts=2;
+	int open_flag = 0,local_flag = 0,incremental_flag=0;
+        int fd=0,ret,opts=1;
         int fsd1,fsd2,fsd3;
         struct fiemap *fiemap1,*fiemap2;
         off_t block_count,block_size;
         
-	fprintf (stderr, "e4send %s (%s)\n ", E2FSPROGS_VERSION,
+	fprintf (stderr, "e4send %s (%s)\n", E2FSPROGS_VERSION,
 		 E2FSPROGS_DATE);
+
        	while ((c = getopt (argc, argv, "ilF")) != EOF)
 		switch (c) {
 		case 'i':
 			incremental_flag++;
-                        opts++;       
+                        opts+=2;       
 			break;
-                case 'F':
-			full_flag++;
-			break;
-               
+              
                 default:
 			usage();
 		}
 	if (optind != argc - opts ) 
 		usage();
 
+        
         device_name = argv[optind];
-	image_fn = argv[optind+1];
+        image_fn = argv[optind+1];
+        /* Get the snapshot from input string, mount the device if not mounted */
         get_snapshot_filename(device_name,snapshot_name,snapshot_file);
-        printf("\nDevice:%s\nSnapshot:%s\nSnapshot file path:%s\n",device_name,snapshot_name,snapshot_file);
+//        printf("\nDevice:%s\nSnapshot:%s\nSnapshot file path:%s\n",device_name,snapshot_name,snapshot_file);
 
+        /* Open the source snapshot file for reading */
         retval = ext2fs_open (snapshot_file, open_flag, 0, 0,
 			      unix_io_manager, &fs);
         if (retval) {
@@ -530,6 +505,7 @@ int main (int argc, char ** argv)
 		      stdout);
 		exit(1);
 	}
+        /* Initialize fs->block_map */
         retval= ext2fs_read_bitmaps(fs);
         if (retval) {
 		com_err (program_name, retval, "while trying to read bitmap");
@@ -538,52 +514,23 @@ int main (int argc, char ** argv)
         block_count=fs->super->s_blocks_count;
         block_size=fs->blocksize;
 
-        if(full_flag)
-        {       if(!strcmp(image_fn, "-")){
-                        fd=1;
-                         trunc_val=(char *)&block_count;        
+        if(!incremental_flag)
+        {               /* Send block count for truncate() at receive side */
+                        trunc_val=(char *)&block_count;        
                         ret=write(1,trunc_val,sizeof(off_t));
                         if(ret<0){
                                 com_err (program_name, retval, "while trying to write to destination");
                         }
+                         /* Send block size for truncate() at receive side */
                         trunc_val=(char *)&block_size;
                         ret=write(1,trunc_val, sizeof(off_t));
                         if(ret<0){
                                 com_err (program_name, retval, "while trying to write to destination");
                         }
-                        write_full_image_remote(fs,fd);
-                 }
-                 else{
+                        write_full_image(fs);
                
-#ifdef HAVE_OPEN64
-        		fd = open64(image_fn, O_CREAT|O_TRUNC|O_WRONLY, 0600);
-#else
-                	fd = open(image_fn, O_CREAT|O_TRUNC|O_WRONLY, 0600);
-#endif
-                        if (fd < 0) {
-        			com_err(program_name, errno,
-        				_("while trying to open %s"), argv[optind+1]);
-        			exit(1);
-                        }
-                
-                        write_full_image(fs, fd);
-                }
-                if(strcmp(image_fn, "-")){
-#ifdef HAVE_OPEN64
-                        ret=ftruncate64(fd,block_count*block_size);
-#else
-                        ret=ftruncate(fd,block_count*block_size);
-#endif
-                        if(ret<0){
-                                com_err (program_name, retval, _("while trying to truncate %s"),
-                                	 image_fn);
-                        }
-        
-                }
-
-                close(fd);
-
         }
+        /* Incremental code to local device */
         else
         {
                 close(fd);
@@ -645,10 +592,11 @@ int main (int argc, char ** argv)
                		exit(1);
                	}
                 write_incremental_local(fs,fs2,fs3);
-               ext2fs_close (fs3);
+                ext2fs_close (fs3);
                 ext2fs_close (fs2);
 
         }
         ext2fs_close (fs);
 	exit (0);
 }
+

@@ -46,7 +46,7 @@ const char * program_name = "e4receive";
 
 static void usage(void)
 {
-	fprintf(stderr, _("Usage: %s <image_file>\n"),
+	fprintf(stderr, _("Usage: %s <target_device>\n"),
 		program_name);
 	exit (1);
 }
@@ -70,6 +70,7 @@ static int check_zero_block(char *buf, int blocksize)
 static void print_output_table(char * buff)
 {       
         unsigned int i;
+        static int f=0;
         int ret;       
         blk_t *target_off;
         blk_t blk=0;
@@ -79,9 +80,9 @@ static void print_output_table(char * buff)
         {
                 target_off=(blk_t*)(buff + i*(sizeof(blk_t)));
                 blk=*target_off; 
-                memcpy(data1, buff+CHUNK_BLOCK_SIZE*(i+1), CHUNK_BLOCK_SIZE);
-                fprintf(stderr,"\n%d\t %u\t",i,blk);
-                ret=write(1,data1,1);
+                //memcpy(data1, buff+CHUNK_BLOCK_SIZE*(i+1), CHUNK_BLOCK_SIZE);
+                fprintf(stdout,"\n%d\t%d\t %u\t",f++,i,blk);
+                //ret=write(1,data1,1);
         }
 }
 
@@ -118,10 +119,11 @@ static void receive_full_image(int fd)
 	}
         memset(terminate, -1, CHUNK_BLOCK_SIZE*(CHUNK_BLOCKS_COUNT+1));
         memset(sector, 0, CHUNK_BLOCK_SIZE);
-        fflush(stdin);
+
         while(1)
         {
                 memset(buff, 0, CHUNK_BLOCK_SIZE*(CHUNK_BLOCKS_COUNT+1));
+                /* CHUNK_BLOCKS_COUNT + 1, here +1 is for the metadata block of chunk */
                 for(i=0;i<CHUNK_BLOCKS_COUNT+1;i++)
                 {
                         ret=read(fin, sector, CHUNK_BLOCK_SIZE);
@@ -133,11 +135,12 @@ static void receive_full_image(int fd)
                         }
                         memcpy(buff + i*CHUNK_BLOCK_SIZE, sector, CHUNK_BLOCK_SIZE);
                 }
+                /* Check if the chunk is the last chunk */
                 if(!strcmp(buff,terminate))
-                        break;                
+                        break;     
                 for(i=0; i<CHUNK_BLOCKS_COUNT; i++)
                 {       target=(blk_t *)(buff + (i*sizeof(blk_t)));
-                        offset=(off_t)(* target);
+                        offset=(int)(* target);
                         memcpy(data, buff + CHUNK_BLOCK_SIZE*(i+1), CHUNK_BLOCK_SIZE);
 #ifdef HAVE_LSEEK64
         		if (lseek64(fd, offset, SEEK_CUR) < 0){
@@ -201,6 +204,7 @@ int main (int argc, char ** argv)
                 exit(1);
         }
         //write(1, temp, CHUNK_SIZE);    /*  Debugging  */
+        /* block count for truncate */
         ret=read(0,values,sizeof(off_t));
         if(ret<0)
         {       
@@ -209,6 +213,7 @@ int main (int argc, char ** argv)
                 exit(1);
         }
         block_count=*(off_t *)values;
+        /* block size for truncate */
         ret=read(0,values,sizeof(off_t));
         if(ret<0)
         {       
