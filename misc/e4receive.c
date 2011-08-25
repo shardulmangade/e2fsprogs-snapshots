@@ -20,6 +20,12 @@
 #ifdef HAVE_STDLIB_H
 #include <stdlib.h>
 #endif
+#ifdef HAVE_GETOPT_H
+#include <getopt.h>
+#else
+extern char *optarg;
+extern int optind;
+#endif
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -38,6 +44,7 @@
 
 #define MAX 150
 #define MNT "/mnt/source"
+#define SNAPSHOT_SHIFT 0
 
 #define CHUNK_BLOCK_SIZE 4096
 #define CHUNK_BLOCKS_COUNT CHUNK_BLOCK_SIZE/sizeof(blk_t)
@@ -168,6 +175,82 @@ static void receive_full_image(int fd)
 
 }
 
+static void receive_incremental(char *device)
+{
+        char *read_data;
+        __u64 data,length,logical_off;
+        int extents;
+        int i,fd;
+        void *buf;
+        blk_t blk;
+        __u32 *mapped,mapped_buf;
+        int ret;
+        int open_flag=0;
+        errcode_t retval;
+        ext2_filsys fs;
+
+        fd = open(device, O_WRONLY, 0600);
+        if(fd<0)
+                fprintf(stderr,"Error opening target device");
+
+        read_data=malloc(sizeof(data));
+        read_data=malloc(sizeof(data));
+
+        ret=read(0,read_data,sizeof(mapped_buf));
+        mapped_buf=*(__u32 *)read_data;
+        /* Debugging */
+        //fprintf(stderr,"\n\nRecieved data %u",mapped_buf);
+       
+        extents=mapped_buf;
+
+        for(i=0;i<extents;i++)
+        {
+                
+                ret=read(0,read_data,sizeof(data));
+                logical_off=*(__u64*)read_data;
+        
+                ret=read(0,read_data,sizeof(data));
+                length=*(__u64*)read_data;
+              
+                buf = (void *)malloc(length); 
+                ret=read(0,buf,length);
+                 
+                lseek(fd, logical_off - SNAPSHOT_SHIFT, SEEK_SET);
+                ret=write(fd, buf, length);
+                free(buf);
+                
+        }
+        close(fd);
+        
+        retval = ext2fs_open (device, EXT2_FLAG_RW, 0, 0,
+			      unix_io_manager, &fs);
+        if (retval) {
+		com_err (program_name, retval, _("while trying to open %s"),
+			 device);
+		fputs(_("Couldn't find valid filesystem superblock.\n"),
+		      stdout);
+		exit(1);
+	}
+ 
+        buf=malloc(fs->blocksize);                    
+        while(1)
+        {
+                ret=read(0, read_data, sizeof(blk_t));
+                blk=*(blk_t *)read_data;
+                if(blk==-1)
+                        break;
+                ret=read(0, buf, fs->blocksize);
+                retval = io_channel_write_blk(fs->io, blk, 1, buf);
+		if (retval) {
+			com_err(program_name, retval,
+				"error reading block %u", blk);
+		}
+         
+                
+        }
+
+}
+
 int main (int argc, char ** argv)
 {
 	errcode_t retval;
@@ -175,60 +258,93 @@ int main (int argc, char ** argv)
 	char device_name[MAX];
         char command[MAX];
         char temp[CHUNK_BLOCK_SIZE];
-	int fd=0,optind=1,ret;
+	int fd=0,ret;
         off_t block_count,block_size;
-        char *values;
+        int incremental_flag=0;
+        char *values, c;
         values=malloc(sizeof(off_t));
-	fprintf (stderr, "e4receive %s (%s)\n", E2FSPROGS_VERSION,
+	fprintf (stderr, "e4receive %s (%s)", E2FSPROGS_VERSION,
 		 E2FSPROGS_DATE);
-	if (optind != argc - 1 ) 
+
+       	while ((c = getopt (argc, argv, "i")) != EOF)
+		switch (c) {
+		case 'i':
+			incremental_flag++;
+                        break;
+              
+                default:
+			usage();
+		}
+	if (argc != optind + 1 ) 
 		usage();
 
+
         strcpy(device_name ,argv[optind]);
+        
+        /* Initial redundant data */
+        ret=read(0, temp, CHUNK_BLOCK_SIZE);
+        if(ret<0)
+        {       
+                retval=errno;
+                com_err(program_name, retval, "error writing chunk");
+                exit(1);
+        }
+
+        if(!incremental_flag){
 
 #ifdef HAVE_OPEN64
-		fd = open64(device_name, O_CREAT|O_TRUNC|O_WRONLY, 0600);
+        		fd = open64(device_name, O_CREAT|O_TRUNC|O_WRONLY, 0600);
 #else
-		fd = open(device_name, O_CREAT|O_TRUNC|O_WRONLY, 0600);
+        		fd = open(device_name, O_CREAT|O_TRUNC|O_WRONLY, 0600);
 #endif
-		if (fd < 0) {
-			com_err(program_name, errno,
-				_(" while trying to open %s"), device_name);
-			exit(1);
+                	if (fd < 0) {
+        			com_err(program_name, errno,
+        				_(" while trying to open %s"), device_name);
+        			exit(1);
+                        }
+        
+                //write(1, temp, CHUNK_SIZE);    /*  Debugging  */
+                /* block count for truncate */
+                ret=read(0,values,sizeof(off_t));
+                if(ret<0)
+                {
+                        retval=errno;
+                        com_err(program_name, retval, "error writing chunk");
+                        exit(1);
                 }
-        ret=read(0, temp, CHUNK_BLOCK_SIZE);      /*    Initial redundant data  */
-        if(ret<0)
-        {       
-                retval=errno;
-                com_err(program_name, retval, "error writing chunk");
-                exit(1);
-        }
-        //write(1, temp, CHUNK_SIZE);    /*  Debugging  */
-        /* block count for truncate */
-        ret=read(0,values,sizeof(off_t));
-        if(ret<0)
-        {       
-                retval=errno;
-                com_err(program_name, retval, "error writing chunk");
-                exit(1);
-        }
-        block_count=*(off_t *)values;
-        /* block size for truncate */
-        ret=read(0,values,sizeof(off_t));
-        if(ret<0)
-        {       
-                retval=errno;
-                com_err(program_name, retval, "error writing chunk");
-                exit(1);
-        }
-        block_size=*(off_t *)values;
-        receive_full_image(fd);
+                block_count=*(off_t *)values;
+                /* block size for truncate */
+                ret=read(0,values,sizeof(off_t));
+                if(ret<0)
+                {
+                        retval=errno;
+                        com_err(program_name, retval, "error writing chunk");
+                        exit(1);
+                }
+                block_size=*(off_t *)values;
+                receive_full_image(fd);
 #ifdef HAVE_OPEN64
-        ret=ftruncate64(fd,block_count*block_size);
+                ret=ftruncate64(fd,block_count*block_size);
 #else
-        ret=ftruncate(fd,block_count*block_size);
+                ret=ftruncate(fd,block_count*block_size);
 #endif
-        close(fd);
+                close(fd);
+
+        }
+        else{
+                /* Initial redundant data */
+                ret=read(0, temp, CHUNK_BLOCK_SIZE);      
+                if(ret<0)
+                {
+                        retval=errno;
+                        com_err(program_name, retval, "error writing chunk");
+                        exit(1);
+                }
+        
+        
+                receive_incremental(device_name);
+        }
+
         printf("\nFull Backup completed\n\n");
         exit (0);
 }

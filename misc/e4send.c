@@ -58,7 +58,7 @@ const char * program_name = "e4send";
 
 static void usage(void)
 {
-	fprintf(stderr,"Usage:\n %s device@snapshot_name \t\t\t\t   : Full backup to remote device\n %s -i  device@snapshot2 device@snapshot1 local_device : Incremental backup to local device \n\t\t\t\t\t\t\t     Send deltas over snapshot 2 to snapshot1 to local device\n\n",	program_name,program_name);
+	fprintf(stderr,"Usage:\n %s device@snapshot_name \t\t\t\t   : Full backup to remote device\n %s -i  device@snapshot2 device@snapshot1 : Incremental backup \n\t\t\t\t\t\t\t     Send deltas over snapshot 2 to snapshot1 \n\n",	program_name,program_name);
 	exit (1);
 }
 
@@ -75,35 +75,6 @@ static int check_zero_block(char *buf, int blocksize)
 		left--;
 	}
 	return 1;
-}
-
-static void write_block(int fd, char *buf, int sparse_offset,
-			int blocksize, blk_t block)
-{
-	int		count;
-	errcode_t	err;
-
-	if (sparse_offset) {
-#ifdef HAVE_LSEEK64
-		if (lseek64(fd, sparse_offset, SEEK_CUR) < 0)
-			perror("lseek");
-#else
-		if (lseek(fd, sparse_offset, SEEK_CUR) < 0)
-			perror("lseek");
-#endif
-	}
-	if (blocksize) {
-		count = write(fd, buf, blocksize);
-		if (count != blocksize) {
-			if (count == -1)
-				err = errno;
-			else
-				err = 0;
-			com_err(program_name, err, "error writing block %u",
-				block);
-			exit(1);
-		}
-	}
 }
 
 /* Retrive mount-point for device if mounted. If the device
@@ -281,10 +252,8 @@ static void write_full_image(ext2_filsys fs)
 
 
 /*
- * Input-
+ * The function applies fiemap ioctl on fd and reads fiemaps 
  * fd: Open file descriptor to read fiemap from
- *
- * The function applies fiemap ioctl on fd and reads fiemaps
  */
 struct fiemap *read_fiemap(int fd)
 {
@@ -296,7 +265,7 @@ struct fiemap *read_fiemap(int fd)
                 fprintf(stderr, "Out of memory allocating fiemap\n");   
                 return NULL;
         }
-        //memset(fiemap, 0, sizeof(struct fiemap));
+        memset(fiemap, 0, sizeof(struct fiemap));
 
         fiemap->fm_start = 0;
         fiemap->fm_length = ~0;
@@ -332,10 +301,12 @@ struct fiemap *read_fiemap(int fd)
 }
 
 /*
- * dumps fiemap to temporary disk image 
- * called only if we are in revert mode
+ * dumps fiemap contents
+ * fiemap2 : Fiemap of older snapshot state of source device
+ * snapshot_file : File descriptor of newer snapshot
+ * disk_image: Target device (stdout)
  */
-void dump_fiemap(struct fiemap *fiemap2, int snapshot_file, int disk_image,int flag)
+void dump_fiemap(struct fiemap *fiemap2, int snapshot_file, int disk_image)
 {
 	int i,j,k;
 	void *buf;
@@ -343,38 +314,31 @@ void dump_fiemap(struct fiemap *fiemap2, int snapshot_file, int disk_image,int f
 	static unsigned long offset=0;
         char extents[sizeof(fiemap2->fm_mapped_extents)];
         int ret;
-        if(flag)
-                ret=write(1,(char *)fiemap2->fm_mapped_extents,fiemap2->fm_mapped_extents);
 
+        ret=write(1,(char *)&fiemap2->fm_mapped_extents,sizeof(fiemap2->fm_mapped_extents));
+     
 	for (i=0;i<fiemap2->fm_mapped_extents;i++) {
 		if(fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT !=
 		   fiemap2->fm_extents[i].fe_physical) {
 			buf = (void *)malloc(fiemap2->fm_extents[i].fe_length);
-                        //printf("\nEnterd in for offset %lu",fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT);
+                        
 			lseek(snapshot_file, fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT, SEEK_SET);
 			ret=read(snapshot_file, buf, fiemap2->fm_extents[i].fe_length);			
-
-                        if(flag){
-                                ret=write(1, &fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT, sizeof(fiemap2->fm_extents[i].fe_logical));
-                                ret=write(1, &fiemap2->fm_extents[i].fe_length, sizeof(fiemap2->fm_extents[i].fe_length));
-                                ret=write(disk_image, buf, fiemap2->fm_extents[i].fe_length);      
+                        ret=write(1, &fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT, sizeof(fiemap2->fm_extents[i].fe_logical));
+                        ret=write(1, &fiemap2->fm_extents[i].fe_length, sizeof(fiemap2->fm_extents[i].fe_length));
+                        ret=write(1, buf, fiemap2->fm_extents[i].fe_length);
                                       
-                        }
-                        else{
-                                
-                                lseek(disk_image, fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT, SEEK_SET);
-                                ret=write(disk_image, buf, fiemap2->fm_extents[i].fe_length);
-                                free(buf);
-                        }
+
 		}
 	}
       
 }
 
+
 /* Create the incremental backup in terms of deltas from fs1 and fs2.
-   The deltas are applied over to fs3.
+   Deltas sent to stdout.
 */
-static void write_incremental_local(ext2_filsys fs1, ext2_filsys fs2, ext2_filsys fs3)
+static void write_incremental(ext2_filsys fs1, ext2_filsys fs2)
 {
 	blk_t	blk;
 	int	group = 0;
@@ -392,6 +356,12 @@ static void write_incremental_local(ext2_filsys fs1, ext2_filsys fs2, ext2_filsy
 		com_err(program_name, ENOMEM, "while allocating buffer");
 		exit(1);
 	}
+        blk_buf = malloc(sizeof(blk_t));
+	if (!blk_buf) {
+		com_err(program_name, ENOMEM, "while allocating buffer");
+		exit(1);
+	}
+
 	zero_buf = malloc(fs1->blocksize);
 	if (!zero_buf) {
 		com_err(program_name, ENOMEM, "while allocating buffer");
@@ -400,7 +370,6 @@ static void write_incremental_local(ext2_filsys fs1, ext2_filsys fs2, ext2_filsy
 	memset(zero_buf, 0, fs1->blocksize);
         for (blk = fs1->super->s_first_data_block;
 	     blk < (fs1->super->s_blocks_count); blk++) {
-                /* Skip block group if none of the blocks allocated */
                 if(fs1->group_desc[group].bg_flags & EXT2_BG_BLOCK_UNINIT){
                         group++;
                         blk+=BLOCK_GROUP_OFFSET(fs1);
@@ -420,19 +389,17 @@ static void write_incremental_local(ext2_filsys fs1, ext2_filsys fs2, ext2_filsy
                         if (check_zero_block(buf, fs1->blocksize))
 				continue;
 
-                        retval = io_channel_write_blk(fs3->io, blk, 1, buf);
-			if (retval) {
-				com_err(program_name, retval,
-					"error reading block %u", blk);
-			}
-
-      
+                        memcpy(blk_buf,(char *)&blk, sizeof(blk_t));
+                        blk=*(blk_t *)blk_buf;
+                        write(1,blk_buf,sizeof(blk_t));
+                        write(1,buf,fs1->blocksize);
+                        
                 }
         }
+        memset(blk_buf,-1,sizeof(blk_t));
+        write(1,blk_buf,sizeof(blk_t));
 
 }
-
-
 
 
 /* Sepearate the names of target device, snapshot and snapshot file
@@ -466,10 +433,10 @@ int main (int argc, char ** argv)
 	char *image_fn,*device_name,*device_name2,*trunc_val;
         char command[MAX],snapshot_file[MAX],snapshot_name[MAX],mount_point[MAX];
         char snapshot_file2[MAX],snapshot_name2[MAX],mount_point2[MAX];
-	int open_flag = 0,local_flag = 0,incremental_flag=0;
-        int fd=0,ret,opts=1;
+	int open_flag = 0,incremental_flag=0;
+        int ret,opts=1;
         int fsd1,fsd2,fsd3;
-        struct fiemap *fiemap1,*fiemap2;
+        struct fiemap *fiemap;
         off_t block_count,block_size;
         
 	fprintf (stderr, "e4send %s (%s)\n", E2FSPROGS_VERSION,
@@ -479,7 +446,7 @@ int main (int argc, char ** argv)
 		switch (c) {
 		case 'i':
 			incremental_flag++;
-                        opts+=2;       
+                        opts+=1;       
 			break;
               
                 default:
@@ -493,7 +460,6 @@ int main (int argc, char ** argv)
         image_fn = argv[optind+1];
         /* Get the snapshot from input string, mount the device if not mounted */
         get_snapshot_filename(device_name,snapshot_name,snapshot_file);
-//        printf("\nDevice:%s\nSnapshot:%s\nSnapshot file path:%s\n",device_name,snapshot_name,snapshot_file);
 
         /* Open the source snapshot file for reading */
         retval = ext2fs_open (snapshot_file, open_flag, 0, 0,
@@ -533,9 +499,7 @@ int main (int argc, char ** argv)
         /* Incremental code to local device */
         else
         {
-                close(fd);
                 device_name2 =argv[optind+1];
-                image_fn=argv[optind+2];
                 get_snapshot_filename(device_name2,snapshot_name2,snapshot_file2);
                 printf("\nDevice:%s\nSnapshot:%s\nSnapshot file path:%s\n",device_name2,snapshot_name2,snapshot_file2);
 
@@ -552,7 +516,7 @@ int main (int argc, char ** argv)
                 if (retval) {
         		com_err (program_name, retval, "while trying to read bitmap");
         		exit(1);
-        	}       
+        	}
                         
                 fsd1 = open(snapshot_file, O_RDONLY, 0600);
                 if(fsd1<0)
@@ -560,39 +524,15 @@ int main (int argc, char ** argv)
 		fsd2 = open(snapshot_file2, O_RDONLY, 0600);
                 if(fsd2<0)
                         fprintf(stderr,"Error opening snapshot file");
-                fsd3 = open(image_fn, O_WRONLY, 0600);
-                if(fsd3<0)
-                        fprintf(stderr,"Error opening target device");
-                
-                fiemap2=read_fiemap(fsd2);
-                dump_fiemap(fiemap2,fsd1,fsd3,0);
+                fiemap=read_fiemap(fsd2);
 
-
-#ifdef HAVE_OPEN64
-                        ret=ftruncate64(fsd3,block_count*block_size);
-#else
-                        ret=ftruncate(fsd3,block_count*block_size);
-#endif
-                        if(ret<0){
-                                com_err (program_name, retval, _("while trying to truncate %s"),
-                                	 image_fn);
-                        }
+                dump_fiemap(fiemap,fsd1,0);
        
-                close(fsd3);
+
                 close(fsd1);
                 close(fsd2);
 
-                retval = ext2fs_open (image_fn, EXT2_FLAG_RW, 0, 0,
-       			      unix_io_manager, &fs3);
-                if (retval) {
-               		com_err (program_name, retval, _("while trying to open %s"),
-               			 image_fn);
-               		fputs(_("Couldn't find valid filesystem superblock.\n"),
-               		      stdout);
-               		exit(1);
-               	}
-                write_incremental_local(fs,fs2,fs3);
-                ext2fs_close (fs3);
+                write_incremental(fs,fs2);
                 ext2fs_close (fs2);
 
         }
