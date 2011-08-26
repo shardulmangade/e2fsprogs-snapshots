@@ -312,16 +312,26 @@ void dump_fiemap(struct fiemap *fiemap2, int snapshot_file, int disk_image)
 	void *buf;
 	static int full=0;
 	static unsigned long offset=0;
+        __u64 mapped=0;
         char extents[sizeof(fiemap2->fm_mapped_extents)];
         int ret;
 
-        ret=write(1,(char *)&fiemap2->fm_mapped_extents,sizeof(fiemap2->fm_mapped_extents));
+        for (i=0;i<fiemap2->fm_mapped_extents;i++) {
+		if(fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT !=
+		   fiemap2->fm_extents[i].fe_physical) {
+                        mapped++;
+                }
+        }
+        /* mapped=fiemap2->fm_mapped_extents; */
+        fprintf(stderr, "Mapped are %lu\n\n",mapped);
+        ret=write(1,(char *)&mapped,sizeof(fiemap2->fm_mapped_extents));
      
 	for (i=0;i<fiemap2->fm_mapped_extents;i++) {
 		if(fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT !=
 		   fiemap2->fm_extents[i].fe_physical) {
 			buf = (void *)malloc(fiemap2->fm_extents[i].fe_length);
                         
+       
 			lseek(snapshot_file, fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT, SEEK_SET);
 			ret=read(snapshot_file, buf, fiemap2->fm_extents[i].fe_length);			
                         ret=write(1, &fiemap2->fm_extents[i].fe_logical - SNAPSHOT_SHIFT, sizeof(fiemap2->fm_extents[i].fe_logical));
@@ -350,6 +360,7 @@ static void write_incremental(ext2_filsys fs1, ext2_filsys fs2)
         blk_t offset=0;
         int count;
         char *output_buf,*blk_buf;
+        int ret;
 
 	buf = malloc(fs1->blocksize);
 	if (!buf) {
@@ -391,13 +402,14 @@ static void write_incremental(ext2_filsys fs1, ext2_filsys fs2)
 
                         memcpy(blk_buf,(char *)&blk, sizeof(blk_t));
                         blk=*(blk_t *)blk_buf;
-                        write(1,blk_buf,sizeof(blk_t));
-                        write(1,buf,fs1->blocksize);
+                        ret=write(1,blk_buf,sizeof(blk_t));
+                        ret=write(1,buf,fs1->blocksize);
                         
                 }
         }
         memset(blk_buf,-1,sizeof(blk_t));
-        write(1,blk_buf,sizeof(blk_t));
+        ret=write(1,blk_buf,sizeof(blk_t));
+        ret=write(1,blk_buf,sizeof(blk_t));
 
 }
 

@@ -199,7 +199,6 @@ static void receive_incremental(char *device)
         ret=read(0,read_data,sizeof(mapped_buf));
         mapped_buf=*(__u32 *)read_data;
         /* Debugging */
-        //fprintf(stderr,"\n\nRecieved data %u",mapped_buf);
        
         extents=mapped_buf;
 
@@ -208,13 +207,15 @@ static void receive_incremental(char *device)
                 
                 ret=read(0,read_data,sizeof(data));
                 logical_off=*(__u64*)read_data;
+
         
                 ret=read(0,read_data,sizeof(data));
                 length=*(__u64*)read_data;
-              
+
                 buf = (void *)malloc(length); 
                 ret=read(0,buf,length);
-                 
+
+               
                 lseek(fd, logical_off - SNAPSHOT_SHIFT, SEEK_SET);
                 ret=write(fd, buf, length);
                 free(buf);
@@ -222,6 +223,7 @@ static void receive_incremental(char *device)
         }
         close(fd);
         
+        fprintf(stderr, "Done with mapping");
         retval = ext2fs_open (device, EXT2_FLAG_RW, 0, 0,
 			      unix_io_manager, &fs);
         if (retval) {
@@ -240,15 +242,17 @@ static void receive_incremental(char *device)
                 if(blk==-1)
                         break;
                 ret=read(0, buf, fs->blocksize);
+                write(1,buf,fs->blocksize);
                 retval = io_channel_write_blk(fs->io, blk, 1, buf);
 		if (retval) {
 			com_err(program_name, retval,
 				"error reading block %u", blk);
 		}
-         
+                         
                 
         }
-
+        free(buf);
+        ext2fs_close (fs);
 }
 
 int main (int argc, char ** argv)
