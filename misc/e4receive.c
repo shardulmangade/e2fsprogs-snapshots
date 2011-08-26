@@ -223,7 +223,7 @@ static void receive_incremental(char *device)
         }
         close(fd);
         
-        fprintf(stderr, "Done with mapping");
+
         retval = ext2fs_open (device, EXT2_FLAG_RW, 0, 0,
 			      unix_io_manager, &fs);
         if (retval) {
@@ -242,7 +242,7 @@ static void receive_incremental(char *device)
                 if(blk==-1)
                         break;
                 ret=read(0, buf, fs->blocksize);
-                write(1,buf,fs->blocksize);
+
                 retval = io_channel_write_blk(fs->io, blk, 1, buf);
 		if (retval) {
 			com_err(program_name, retval,

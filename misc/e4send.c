@@ -323,7 +323,7 @@ void dump_fiemap(struct fiemap *fiemap2, int snapshot_file, int disk_image)
                 }
         }
         /* mapped=fiemap2->fm_mapped_extents; */
-        fprintf(stderr, "Mapped are %lu\n\n",mapped);
+
         ret=write(1,(char *)&mapped,sizeof(fiemap2->fm_mapped_extents));
      
 	for (i=0;i<fiemap2->fm_mapped_extents;i++) {
@@ -536,15 +536,15 @@ int main (int argc, char ** argv)
 		fsd2 = open(snapshot_file2, O_RDONLY, 0600);
                 if(fsd2<0)
                         fprintf(stderr,"Error opening snapshot file");
-                fiemap=read_fiemap(fsd2);
+                fiemap=read_fiemap(fsd1);
 
-                dump_fiemap(fiemap,fsd1,0);
+                dump_fiemap(fiemap,fsd2,0);
        
 
                 close(fsd1);
                 close(fsd2);
 
-                write_incremental(fs,fs2);
+                write_incremental(fs2,fs);
                 ext2fs_close (fs2);
 
         }
