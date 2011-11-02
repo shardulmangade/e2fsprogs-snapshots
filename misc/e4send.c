@@ -445,12 +445,12 @@ int main (int argc, char ** argv)
 	char *image_fn,*device_name,*device_name2,*trunc_val;
         char command[MAX],snapshot_file[MAX],snapshot_name[MAX],mount_point[MAX];
         char snapshot_file2[MAX],snapshot_name2[MAX],mount_point2[MAX];
-	int open_flag = 0,incremental_flag=0;
+	int open_flag = 0,incremental_flag=0,id;
         int ret,opts=1;
         int fsd1,fsd2,fsd3;
         struct fiemap *fiemap;
         off_t block_count,block_size;
-        
+
 	fprintf (stderr, "e4send %s (%s)\n", E2FSPROGS_VERSION,
 		 E2FSPROGS_DATE);
 
@@ -510,11 +510,15 @@ int main (int argc, char ** argv)
         }
         /* Incremental code to local device */
         else
-        {
+        {       
                 device_name2 =argv[optind+1];
                 get_snapshot_filename(device_name2,snapshot_name2,snapshot_file2);
                 printf("\nDevice:%s\nSnapshot:%s\nSnapshot file path:%s\n",device_name2,snapshot_name2,snapshot_file2);
 
+                id=fs->super->s_snapshot_id;
+                //fprintf(stderr, "\n\n\nTempo:%d\n\n\n", id);
+                write(1,(char *)&id, sizeof(__u32));
+ 
                 retval = ext2fs_open (snapshot_file2, open_flag, 0, 0,
 			      unix_io_manager, &fs2);
                 if (retval) {
@@ -525,6 +529,7 @@ int main (int argc, char ** argv)
         		exit(1);
         	}
                 retval= ext2fs_read_bitmaps(fs2);
+         
                 if (retval) {
         		com_err (program_name, retval, "while trying to read bitmap");
         		exit(1);
@@ -537,14 +542,15 @@ int main (int argc, char ** argv)
                 if(fsd2<0)
                         fprintf(stderr,"Error opening snapshot file");
                 fiemap=read_fiemap(fsd1);
-
+                //write(2,"Iamhere",7);
                 dump_fiemap(fiemap,fsd2,0);
        
 
                 close(fsd1);
                 close(fsd2);
-
+                
                 write_incremental(fs2,fs);
+ 
                 ext2fs_close (fs2);
 
         }

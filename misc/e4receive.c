@@ -175,6 +175,20 @@ static void receive_full_image(int fd)
 
 }
 
+static int check(ext2_filsys fs, __u32 id)
+{
+        int i;
+        if((fs->super->s_flags & EXT2_FLAGS_IS_SNAPSHOT)==1)
+        {       fprintf(stderr,"\nError: Destination is not a Snapshot\n");
+                return 0;
+        }
+        if(fs->super->s_snapshot_id!=id)
+        {       fprintf(stderr,"\nError: Destination Snapshot state doesnot match with the specified state.\n");
+                return 0;
+        }
+        return 1;
+}
+
 static void receive_incremental(char *device)
 {
         char *read_data;
@@ -183,25 +197,39 @@ static void receive_incremental(char *device)
         int i,fd;
         void *buf;
         blk_t blk;
-        __u32 *mapped,mapped_buf;
+        __u32 *mapped,mapped_buf,id_buf;
         int ret;
         int open_flag=0;
         errcode_t retval;
         ext2_filsys fs;
+
+
+        retval = ext2fs_open (device, EXT2_FLAG_RW, 0, 0,
+			      unix_io_manager, &fs);
+        if (retval) {
+		com_err (program_name, retval, _("while trying to open %s"),
+			 device);
+		fputs(_("Couldn't find valid filesystem superblock.\n"),
+		      stdout);
+		exit(1);
+	}
 
         fd = open(device, O_WRONLY, 0600);
         if(fd<0)
                 fprintf(stderr,"Error opening target device");
 
         read_data=malloc(sizeof(data));
-        read_data=malloc(sizeof(data));
+
+        ret=read(0,read_data,sizeof(id_buf));
+        id_buf=*(__u32 *)read_data;
+        if(check(fs, id_buf)==0)
+                exit(1);
 
         ret=read(0,read_data,sizeof(mapped_buf));
         mapped_buf=*(__u32 *)read_data;
-        /* Debugging */
-       
-        extents=mapped_buf;
 
+//        fprintf(stderr, "Check:Extents %d",mapped_buf);                       
+        extents=mapped_buf;
         for(i=0;i<extents;i++)
         {
                 
@@ -212,7 +240,7 @@ static void receive_incremental(char *device)
                 ret=read(0,read_data,sizeof(data));
                 length=*(__u64*)read_data;
 
-                buf = (void *)malloc(length); 
+                buf = (void *)malloc(length);
                 ret=read(0,buf,length);
 
                
@@ -224,17 +252,20 @@ static void receive_incremental(char *device)
         close(fd);
         
 
-        retval = ext2fs_open (device, EXT2_FLAG_RW, 0, 0,
-			      unix_io_manager, &fs);
-        if (retval) {
-		com_err (program_name, retval, _("while trying to open %s"),
-			 device);
-		fputs(_("Couldn't find valid filesystem superblock.\n"),
-		      stdout);
-		exit(1);
-	}
+        /* retval = ext2fs_open (device, EXT2_FLAG_RW, 0, 0, */
+	/* 		      unix_io_manager, &fs); */
+        /* if (retval) { */
+	/* 	com_err (program_name, retval, _("while trying to open %s"), */
+	/* 		 device); */
+	/* 	fputs(_("Couldn't find valid filesystem superblock.\n"), */
+	/* 	      stdout); */
+	/* 	exit(1); */
+	/* } */
+
+        /* if(check(fs)==0) */
+        /*         return; */
  
-        buf=malloc(fs->blocksize);                    
+        buf=malloc(fs->blocksize);
         while(1)
         {
                 ret=read(0, read_data, sizeof(blk_t));
@@ -252,6 +283,7 @@ static void receive_incremental(char *device)
                 
         }
         free(buf);
+
         ext2fs_close (fs);
 }
 
@@ -326,6 +358,17 @@ int main (int argc, char ** argv)
                         exit(1);
                 }
                 block_size=*(off_t *)values;
+#ifdef HAVE_LSEEK64
+                ret=lseek64(fd, block_count*block_size, SEEK_SET);
+#else
+                ret=lseek(fd,block_count*block_size, SEEK_SET);
+#endif
+                if(ret<0 && errno == EINVAL)
+                {
+                        fprintf(stderr, "\nError: Not Enough space on Destination drive\n\n");
+                        exit(0);
+                }
+                ret=lseek(fd,0, SEEK_SET);
                 receive_full_image(fd);
 #ifdef HAVE_OPEN64
                 ret=ftruncate64(fd,block_count*block_size);
@@ -333,6 +376,7 @@ int main (int argc, char ** argv)
                 ret=ftruncate(fd,block_count*block_size);
 #endif
                 close(fd);
+                printf("\nSuccess: Full Backup completed\n\n");
 
         }
         else{
@@ -347,8 +391,9 @@ int main (int argc, char ** argv)
         
         
                 receive_incremental(device_name);
+                printf("\nSuccess: Incremental Backup completed\n\n");
+
         }
 
-        printf("\nFull Backup completed\n\n");
         exit (0);
 }
